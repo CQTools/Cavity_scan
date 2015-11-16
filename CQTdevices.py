@@ -7,10 +7,12 @@ Created on Wed Jun 10 15:13:21 2015
 
 import serial
 import subprocess as sp
+import json   
 
 
 
-class windfreakusb2(object):
+
+class WindFreakUsb2(object):
 	"""
 	The first character of any communication to the SynthUSBii unit is the command.  (It is 
 	case sensitive.)  What this character tells the unit to do is detailed below. Ideally a 
@@ -95,7 +97,7 @@ class windfreakusb2(object):
 	def set_pulse_mode(self,value):
 		self._serial_write('j' + str(value))
 	
-	def get_pulse_mode(self,value):
+	def get_pulse_mode(self):
 		self._serial_write('j?')
 		return self._serial_read()
 		
@@ -132,7 +134,7 @@ class windfreakusb2(object):
 		
 
 		
-class Anlogcomm(object):
+class AnalogComm(object):
 # Module for communicating with the mini usb IO board
 	"""
 	Mini analog IO unit.
@@ -167,45 +169,45 @@ class Anlogcomm(object):
 		print self._serial_read() #will read a command
 		self.reset() #Resets device so correct voltages read
 		
-    
+	
 	def _open_port(self, port):
 		ser = serial.Serial(port, timeout=0.5)
 		ser.readline()
 		ser.timeout = 0.5 
 		return ser
-    
+	
 	def _serial_write(self, string):
 		self.serial.write(string + '\n')
-    
+	
 	def _serial_read(self):
 		msg_string = self.serial.readline()
 		# Remove any linefeeds etc
 		msg_string = msg_string.rstrip()
 		return msg_string
-    
+	
 	def reset(self):
 		self._serial_write('*RST')
 		return self._serial_read()
-        
+		
 	def get_voltage(self,channel):
 		self._serial_write('IN?' + str(channel))
 		voltage = self._serial_read()
 		return voltage
-        
+		
 	def get_voltage_all(self):
 		self._serial_write('ALLIN?')
 		allin = self._serial_read()
 		return allin
-    
-    
+	
+	
 	def set_voltage(self,channel,value):
 		self._serial_write('OUT'+ str(channel) + str(value))
 		return 
-    
+	
 	def set_digitout(self,value):
 		self._serial_write('DIGOUT' + str(value))
 		return
-    
+	
 	def close(self): 
 		self.serial.close()
 
@@ -213,9 +215,121 @@ class Anlogcomm(object):
 		self._serial_write('*IDN?')
 		return self._serial_read()
 
+class PowerMeterComm(object):
+# Module for communicating with the power meter 
+	'''
+	Simple optical power meter.                                                    
+																			   
+	Usage: Send plaintext commands, separated by newline/cr or semicolon.          
+	       An eventual reply comes terminated with cr+lf.                          
+	                                                                               
+	Important commands:                                                            
+	                                                                               
+	*IDN?     Returns device identifier                                            
+	*RST      Resets device, outputs are 0V.                                       
+	RANGE <value>                                                                  
+	          Chooses the shunt resistor index; <value> ranges from 1 to 5.        
+	VOLT?     Returns the voltage across the sense resistor.                       
+	RAW?      Returns the voltage across the sense resistor in raw units.          
+	FLOW      starts acquisition every 1 ms and returns raw hex values                        
+	STOP      resets the raw sample mode.                                                     
+	ALLIN?    Returns all 8 input voltages and temperature.                                   
+	HELP      Print this help text.   
+	'''
+
+	baudrate = 115200
+	
+	def __init__(self, port):
+		self.serial = self._open_port(port)
+		self._serial_write('*IDN?')# flush io buffer
+		print self._serial_read() #will read unknown command
+		self.set_range(4)
+		self.range = self.get_range
+		self.data = self._read_cal_file()
+		#self.set_range(4) #Sets bias resistor to 1k
+		
+	def _open_port(self, port):
+		ser = serial.Serial(port, timeout=1)
+		#ser.readline()
+		#ser.timeout = 1 #causes problem with nexus 7
+		return ser
+		
+	def close(self):
+		self.serial.close()
+
+		
+	
+	def _serial_write(self, string):
+		self.serial.write(string + '\n')
+	
+	def _serial_read(self):
+		msg_string = self.serial.readline()
+		# Remove any linefeeds etc
+		msg_string = msg_string.rstrip()
+		return msg_string
+	
+	def reset(self):
+		self._serial_write('*RST')
+		return self._serial_read()
+		
+	def get_voltage(self):
+		self._serial_write('VOLT?')
+		voltage = self._serial_read()
+		#print voltage
+		return voltage
+		
+	def get_range(self):
+		self._serial_write('RANGE?')
+		pm_range = self._serial_read()
+		#print pm_range
+		return pm_range
+	
+	
+	def set_range(self,value):
+		self._serial_write('RANGE'+ str(value))
+		self.pm_range = value -1
+		return self.pm_range
+	
+	def serial_number(self):
+		self._serial_write('*IDN?')
+		return self._serial_read()
+		
+		"""this section of the code deals with converting between the voltage value and the
+	optical power at the wavelength of interest"""
+	
+	resistors = [1e6,110e3,10e3,1e3,20]    #sense resistors adjust to what is on the board
+	
+	file_name = 's5106_interpolated.cal'    #detector calibration file
+	
+
+	
+	def _read_cal_file(self): # read in calibration file for sensor
+		f = open(self.file_name,'r')
+		x = json.load(f)
+		f.close()
+		return x
+		
+
+	def volt2amp(self,voltage,range_number):
+		self.amp = voltage/self.resistors[range_number]
+		return self.amp
+							
+	
+	def amp2power(self,voltage,wavelength,range_number):
+		amp = self.volt2amp(voltage,range_number-1)
+		xdata = self.data[0]
+		ydata = self.data[1]
+		i = xdata.index(int(wavelength))
+		responsivity = ydata[i]
+		power = amp/float(responsivity)
+		return power
+	
+	def get_power(self,wavelength):
+		self.power = self.amp2power(float(self.get_voltage()),wavelength,int(self.get_range()))
+		return self.power
 
 
-class Countercomm(object):
+class CounterComm(object):
 # Module for communicating with the mini usb counter board
 	"""
 	Simple USB counter.
@@ -247,29 +361,29 @@ class Countercomm(object):
 		self._serial_write('*IDN?')# flush io buffer
 		print self._serial_read() #will read unknown command
 
-        
+		
 	def _open_port(self, port):
 		ser = serial.Serial(port, timeout=1)
 		return ser
-    
+	
 	def _serial_write(self, string):
 		self.serial.write(string + '\n')
-    
+	
 	def _serial_read(self):
 		msg_string = self.serial.readline()
 		# Remove any linefeeds etc
 		msg_string = msg_string.rstrip()
 		return msg_string
-    
+	
 	def reset(self):
 		self._serial_write('*RST')
 		return self._serial_read()
-        
+		
 	def get_counts(self):
 		self._serial_write('COUNTS?')
 		counts = self._serial_read()
 		return counts
-        
+		
 	def get_gate_time(self):
 		self._serial_write('TIME?')
 		out = self._serial_read()
@@ -279,21 +393,21 @@ class Countercomm(object):
 		self._serial_write('LEVEL?')
 		level = self._serial_read()
 		return level
-    
-    
+	
+	
 	def set_gate_time(self,value):
 		self._serial_write('TIME'+ str(int(value)))
 		return 
-    
+	
 
 	def set_TTL(self):
 		self._serial_write('TTL')
 		return
-         
+		 
 	def set_NIM(self):
 		self._serial_write('NIM')
 		return
-         
+		 
 	def close(self): 
 		self.serial.close()
 		
@@ -301,15 +415,15 @@ class Countercomm(object):
 		self._serial_write('*IDN?')
 		return self._serial_read()
 
-class DDScomm(object):
+class DDSComm(object):
 	"""
 	usage: dds_encode [-d device] [-E | -T ] [-R] [-i sourcefile] [-a refamp]
-                     [-q] [-b basedivider]
+					 [-q] [-b basedivider]
 
    options:
    -d device :       Device node. If if device is "-", then stdout is used, 
-                     and the EP1 option disabled. Otherwise, the
-                     location /dev/ioboards/dds0 is used by default. If a file 
+					 and the EP1 option disabled. Otherwise, the
+					 location /dev/ioboards/dds0 is used by default. If a file 
 		     is used instead, the control commands used to prepare
 		     a certain configuration can be stored, and piped to the
 		     DDS separately with a simple cat >device command later.
@@ -317,24 +431,24 @@ class DDScomm(object):
    -E                Allow the usage of the EP1 commands. This is the default.
 
    -T                Disallow the usage of EP1 commands, treat output device
-                     as a plain stream only. Needs to be set when a file is
+					 as a plain stream only. Needs to be set when a file is
 		     used to store the commands.
 
    -R                Reset before loading. Perform a device reset before sending
-                     the specified command. This, however, does only a master
+					 the specified command. This, however, does only a master
 		     reset, not a sensible filling of the registers.
 
    -i sourcefile     Take the command data not from stdin, but from an input
-                     file.
+					 file.
    -a refamp         defines reference amplitude in millivolt directly instead
-                     of taking the default value of 480 mV. Reference amplitude
+					 of taking the default value of 480 mV. Reference amplitude
 		     is the peak amplitude the DDS/amplifier section can
 		     generate.
    -q                Quiet option. This is only useful for boards which use
-                     the internal clock of the cypress chip and can keep the
+					 the internal clock of the cypress chip and can keep the
 		     sync_out muted.
    -b basedivider    This value is the PLL divider and determines the master
-                     clock. The value of <basedivider> is an integer with
+					 clock. The value of <basedivider> is an integer with
 		     values between 1 and 10, corresponding to frequencies form
 		     50 MHz to 500 MHz.
 
