@@ -41,7 +41,7 @@ def power_scan(freq_range,average=10,wavelength=780):
 			value.append(power)
 			time.sleep(5e-3) # delay between asking for next value
 		powers.append(np.mean(value)) #average value to get more reliable number
-	return np.array(powers)
+	return np.array(powers)*1000.0 # Coonvert to mW
 
 
 
@@ -51,7 +51,7 @@ pm.set_range(4) # set suitable range for optical power being measured
 #DDS.set_power(20,'ampunits')# set starting power make it low to ensure have enough adjustment when far from AOM resonance
 powers = power_scan(freq_range) #run scan should take about a minute with 10 averages
 
-plt.plot(freq_range,powers*1000.0)#plot data to make sure it makes sense
+plt.plot(freq_range,powers)#plot data to make sure it makes sense
 plt.xlabel('Frequency (MHz)')
 plt.ylabel('Power (mW)')
 plt.show()
